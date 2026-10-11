@@ -1,0 +1,278 @@
+# ============================================================
+# Dify 电商智能客服工作流（DSL 结构示例）
+# ------------------------------------------------------------
+# ⚠️ 重要说明：
+# 本文件是根据 README 描述整理的【工作流结构示例】，用于展示项目
+# 的完整流程设计。真实可运行版本必须从你的 Dify 平台导出：
+#   应用页面 → 右上角「...」→「导出 DSL」→ 覆盖本文件
+# 直接导入本示例会因缺少模型供应商配置、知识库 ID 等而无法运行。
+# ------------------------------------------------------------
+# 流程设计：
+# 用户消息 → 情绪识别(LLM) → 愤怒?→转人工→结束
+#                       ↓(正常)
+#                   意图识别(LLM) → 4分类路由(条件分支)
+#                       ↓
+#      售后知识库 / 物流知识库 / 商品知识库 / 兜底(其他)
+#                       ↓
+#        代码节点(提取结果, 处理<think>标签)
+#                       ↓
+#           大模型生成回答(注入会话上下文)
+# ============================================================
+app:
+  description: 电商智能客服，支持情绪识别、意图识别、多知识库RAG检索、多轮对话与人工兜底
+  icon: 🤖
+  icon_background: '#E0F5FF'
+  mode: chat
+  name: 电商智能客服
+kind: app
+version: 0.1.0
+workflow:
+  conversation_variables:
+    - description: 记录多轮对话上下文，支持"那运费呢"等指代性问题
+      id: session_context
+      name: session_context
+      selector:
+        - conversation
+        - session_context
+      value_type: paragraph
+  features:
+    memory:
+      allow_edit: true
+      enabled: true
+      role_prefix: 客服
+      window:
+        enabled: true
+        size: 20
+  graph:
+    edges:
+      - id: edge_start_emotion
+        source: start
+        sourceHandle: source
+        target: emotion_recognition
+        targetHandle: target
+      - id: edge_emotion_angry
+        source: emotion_recognition
+        sourceHandle: angry
+        target: transfer_human
+        targetHandle: target
+      - id: edge_emotion_intent
+        source: emotion_recognition
+        sourceHandle: normal
+        target: intent_recognition
+        targetHandle: target
+      - id: edge_intent_after_sale
+        source: intent_recognition
+        sourceHandle: after_sale
+        target: retrieve_after_sale
+        targetHandle: target
+      - id: edge_intent_logistics
+        source: intent_recognition
+        sourceHandle: logistics
+        target: retrieve_logistics
+        targetHandle: target
+      - id: edge_intent_product
+        source: intent_recognition
+        sourceHandle: product
+        target: retrieve_product
+        targetHandle: target
+      - id: edge_intent_other
+        source: intent_recognition
+        sourceHandle: other
+        target: generate_answer
+        targetHandle: target
+      - id: edge_retrieve_after_sale
+        source: retrieve_after_sale
+        sourceHandle: source
+        target: extract_results
+        targetHandle: target
+      - id: edge_retrieve_logistics
+        source: retrieve_logistics
+        sourceHandle: source
+        target: extract_results
+        targetHandle: target
+      - id: edge_retrieve_product
+        source: retrieve_product
+        sourceHandle: source
+        target: extract_results
+        targetHandle: target
+      - id: edge_extract_generate
+        source: extract_results
+        sourceHandle: source
+        target: generate_answer
+        targetHandle: target
+      - id: edge_generate_end
+        source: generate_answer
+        sourceHandle: source
+        target: end
+        targetHandle: target
+    nodes:
+      - id: start
+        type: start
+        data:
+          title: 开始
+          type: start
+          variables:
+            - variable: sys.query
+              value_selector:
+                - sys
+                - query
+      - id: emotion_recognition
+        type: llm
+        data:
+          title: 情绪识别
+          type: llm
+          model:
+            provider: deepseek
+            name: deepseek-chat
+            mode: chat
+          prompt_template:
+            - role: system
+              text: |
+                你是客服情绪识别器。判断用户消息的情绪，只输出JSON：
+                {"sentiment": "angry|neutral|happy"}
+                用户消息：{{#sys.query#}}
+          variables:
+            - variable: sys.query
+              value_selector:
+                - sys
+                - query
+          outputs:
+            - variable: sentiment
+      - id: intent_recognition
+        type: llm
+        data:
+          title: 意图识别
+          type: llm
+          model:
+            provider: deepseek
+            name: deepseek-chat
+            mode: chat
+          prompt_template:
+            - role: system
+              text: |
+                你是客服意图分类器。判断用户问题属于哪类，只输出JSON：
+                {"intent": "after_sale|logistics|product|other"}
+                - after_sale：退换货、退款、售后政策
+                - logistics：物流、快递、发货
+                - product：商品信息、规格、库存
+                - other：其他
+                用户消息：{{#sys.query#}}
+          variables:
+            - variable: sys.query
+              value_selector:
+                - sys
+                - query
+          outputs:
+            - variable: intent
+      - id: transfer_human
+        type: answer
+        data:
+          title: 转人工
+          type: answer
+          answer: |
+            您的情绪比较激动，已为您转接人工客服，请稍等，会有专属客服为您服务。
+      - id: retrieve_after_sale
+        type: knowledge-retrieval
+        data:
+          title: 售后政策检索
+          type: knowledge-retrieval
+          query_variable_selector:
+            - sys
+            - query
+          dataset_ids:
+            - your_after_sale_dataset_id   # ⚠️ 替换为你的售后知识库ID
+          retrieval_mode: multi
+          multiple_retrieval_config:
+            top_k: 3
+            score_threshold: 0.5
+          outputs:
+            - variable: result
+      - id: retrieve_logistics
+        type: knowledge-retrieval
+        data:
+          title: 物流说明检索
+          type: knowledge-retrieval
+          query_variable_selector:
+            - sys
+            - query
+          dataset_ids:
+            - your_logistics_dataset_id    # ⚠️ 替换为你的物流知识库ID
+          retrieval_mode: multi
+          multiple_retrieval_config:
+            top_k: 3
+            score_threshold: 0.5
+          outputs:
+            - variable: result
+      - id: retrieve_product
+        type: knowledge-retrieval
+        data:
+          title: 商品信息检索
+          type: knowledge-retrieval
+          query_variable_selector:
+            - sys
+            - query
+          dataset_ids:
+            - your_product_dataset_id      # ⚠️ 替换为你的商品知识库ID
+          retrieval_mode: multi
+          multiple_retrieval_config:
+            top_k: 3
+            score_threshold: 0.5
+          outputs:
+            - variable: result
+      - id: extract_results
+        type: code
+        data:
+          title: 提取检索结果
+          type: code
+          code: |
+            # 从知识检索结果中提取文本片段
+            # 同时处理 DeepSeek 思考模型输出 <think> 标签的问题
+            import json
+
+            def main(retrieval_result: str) -> dict:
+                result = retrieval_result or ""
+                # 去掉 <think> 思考标签干扰
+                if "<think>" in result and "</think>" in result:
+                    result = result.split("</think>")[-1]
+                return {"context": result}
+          variables:
+            - variable: retrieval_result
+              value_selector:
+                - extract_results
+                - context
+          outputs:
+            - variable: context
+      - id: generate_answer
+        type: llm
+        data:
+          title: 生成回答
+          type: llm
+          model:
+            provider: deepseek
+            name: deepseek-chat
+            mode: chat
+          prompt_template:
+            - role: system
+              text: |
+                你是电商客服助手。根据检索到的知识库内容回答用户问题。
+                如果知识库中没有相关信息，请说"抱歉，这个问题我需要转人工处理"。
+                参考上下文：
+                {{#extract_results.context#}}
+                历史对话：
+                {{#session_context#}}
+          variables:
+            - variable: context
+              value_selector:
+                - extract_results
+                - context
+            - variable: session_context
+              value_selector:
+                - conversation
+                - session_context
+      - id: end
+        type: end
+        data:
+          title: 结束
+          type: end
+          outputs:
+            - variable: answer

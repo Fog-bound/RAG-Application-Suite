@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv/
+
+# 数据和模型
+*.bin
+*.safetensors
+*.pt
+*.pth
+milvus-lite-data/
+docs/
+*.pdf
+*.txt
+!requirements.txt
+
+# 导入时产生的临时文件
+.tmp_*
+./.tmp_*
+
+# 环境变量和密钥
+.env
+.env.local
+*.key
+*.pem
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 系统
+.DS_Store
+Thumbs.db
